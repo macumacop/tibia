@@ -711,7 +711,7 @@ const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v)
 const buzz=p=>{try{navigator.vibrate&&navigator.vibrate(p)}catch(e){}};
 let toastT;function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('on'),2300)}
 const restart=(el,c)=>{if(!el)return;el.classList.remove(c);void el.offsetWidth;el.classList.add(c)};
-function roll(el,to,f=fmt){if(!el)return;const from=+(el.dataset.v||0);el.dataset.v=to;if(reduced||from===to){el.textContent=f(to);return}
+function roll(el,to,f=fmt){if(!el)return;const from=+(el.dataset.v||0);el.dataset.v=to;if(reduced||from===to||document.hidden){el.textContent=f(to);return}
   const t0=performance.now(),D=500;const step=t=>{const k=Math.min(1,(t-t0)/D),e=1-Math.pow(1-k,3);el.textContent=f(Math.round(from+(to-from)*e));if(k<1)requestAnimationFrame(step)};requestAnimationFrame(step)}
 function placePill(wrap,btn,anim=true){const p=wrap&&wrap.querySelector(':scope>.pill');if(!p||!btn)return;if(!anim)p.style.transition='none';p.style.width=btn.offsetWidth+'px';p.style.transform=`translateX(${btn.offsetLeft}px)`;if(!anim){void p.offsetWidth;p.style.transition=''}}
 const hourTxt=(h,short)=>{const hh=Math.floor(h),mm=Math.round((h-hh)*60),ap=hh>=12?'p. m.':'a. m.',h12=((hh+11)%12)+1;return short&&!mm?`${h12} ${ap}`:`${h12}:${String(mm).padStart(2,'0')} ${ap}`};
