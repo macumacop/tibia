@@ -8,7 +8,7 @@ Diseño y desarrollo: [Macgráficas](https://macgraficas.com/).
 
 | Pieza | Dónde vive |
 |---|---|
-| Web (una sola página, sin dependencias) | `index.html` en GitHub Pages |
+| Web (una sola página, sin dependencias) | `index.html` en Cloudflare Pages → https://tibia.macgraficas.com |
 | Política de datos (Ley 1581 de 2012) | `privacidad.html` |
 | Configuración, productos, votación, fechas cerradas | Hoja «Tibia · Panel de la galletería» en Google Drive |
 | Registro de pedidos, votos y producción | La misma hoja, vía Apps Script (`apps-script/Code.gs`) |
@@ -37,6 +37,9 @@ Cuando cambies `Code.gs` más adelante: **Implementar → Gestionar implementaci
 - **Pedidos**: llegan en estado *Por confirmar*. Cámbialo en la lista desplegable (Confirmado, Horneado, En camino, Entregado, Cancelado). Los cancelados liberan cupo. *Revisar* marca pedidos fuera de horario o por encima del cupo.
 - **Producción**: galletas por hornada, bandejas, cupo libre y desglose por sabor. Se actualiza sola.
 
-## Publicación (GitHub Pages)
+## Publicación (Cloudflare Pages)
 
-Settings → Pages → Source: *Deploy from a branch* → `main` / `root`. La web queda en `https://macumacop.github.io/tibia/`. Para un dominio propio, agrégalo en la misma pantalla y crea el registro DNS que indica GitHub.
+- Proyecto **tibia** en la cuenta de Cloudflare de Macgráficas, conectado a este repositorio (rama `main`, sin comando de compilación).
+- Cada cambio que se sube a `main` se publica solo en 1 o 2 minutos.
+- Dirección oficial: **https://tibia.macgraficas.com** (también responde en `tibia-46u.pages.dev`).
+- Para el dominio propio del cliente: proyecto **tibia** → *Dominios personalizados* → *Configurar dominio*.
