@@ -98,8 +98,25 @@ function votacion_() {
   }));
 }
 
+/* ---------- seguridad ----------
+ * La web nunca llama a este script directamente: pasa por la función /api de
+ * Cloudflare, que agrega la clave (API_KEY) y valida la sesión del dueño.
+ * Mientras la propiedad API_KEY no exista, el script acepta llamadas sin clave. */
+function claveValida_(e) {
+  const key = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  return !key || (e && e.parameter && e.parameter.key === key);
+}
+/** Ejecutar una vez desde el editor: crea la clave y la muestra en el registro. */
+function generarClave() {
+  const props = PropertiesService.getScriptProperties();
+  let key = props.getProperty('API_KEY');
+  if (!key) { key = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, ''); props.setProperty('API_KEY', key); }
+  Logger.log('API_KEY (cópiala en Cloudflare como APPS_SCRIPT_KEY): ' + key);
+}
+
 /* ---------- lectura para la web ---------- */
-function doGet() {
+function doGet(e) {
+  if (!claveValida_(e)) return json_({ ok: false, error: 'No autorizado' });
   const cfg = leerConfig_();
   const resp = {
     ok: true, ahora: new Date().toISOString(), config: cfg,
@@ -109,16 +126,27 @@ function doGet() {
   return json_(resp);
 }
 
-/* ---------- registro de pedidos y votos ---------- */
+/* ---------- registro de pedidos, votos y acciones del dueño ---------- */
 function doPost(e) {
+  if (!claveValida_(e)) return json_({ ok: false, error: 'No autorizado' });
   let d;
   try { d = JSON.parse(e.postData.contents); } catch (err) { return json_({ ok: false, error: 'Formato inválido' }); }
   if (d.trampa) return json_({ ok: true }); // campo oculto anti-spam
+  const p = (e && e.parameter) || {};
+  const esAdmin = p.admin === '1' && !!PropertiesService.getScriptProperties().getProperty('API_KEY');
+  if (String(d.tipo || '').indexOf('admin_') === 0) {
+    if (!esAdmin) return json_({ ok: false, error: 'No autorizado' });
+    if (d.tipo === 'admin_resumen') return json_(adminResumen_());
+  }
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
     if (d.tipo === 'voto') return json_(registrarVoto_(d));
-    if (d.tipo === 'pedido') return json_(registrarPedido_(d));
+    if (d.tipo === 'pedido') { d.sinVerificar = p.v === '0'; return json_(registrarPedido_(d)); }
+    if (d.tipo === 'admin_estado') return json_(adminEstado_(d));
+    if (d.tipo === 'admin_producto') return json_(adminProducto_(d));
+    if (d.tipo === 'admin_config') return json_(adminConfig_(d));
+    if (d.tipo === 'admin_fecha') return json_(adminFecha_(d));
     return json_({ ok: false, error: 'Tipo desconocido' });
   } finally { lock.releaseLock(); }
 }
@@ -166,6 +194,7 @@ function registrarPedido_(d) {
   if (cfg.dias.indexOf(fecha.getDay()) < 0 || fechasCerradas_().indexOf(hornada) >= 0 || new Date() > corte || !cfg.abierta) { estado = 'Revisar'; nota = 'fuera de horario o día cerrado'; }
   const ocupadas = ocupado_()[hornada] || 0;
   if (ocupadas + galletas > cfg.cupo) { estado = 'Revisar'; nota = 'supera el cupo (' + (ocupadas + galletas) + '/' + cfg.cupo + ')'; }
+  if (d.sinVerificar) { estado = 'Revisar'; nota = (nota ? nota + '; ' : '') + 'no pasó la verificación anti-bots'; }
 
   const codigo = String(d.codigo || '').replace(/[^\w-]/g, '').slice(0, 12) || ('TIB-' + Date.now().toString().slice(-4));
   const limpio = s => String(s || '').replace(/^[=+\-@]/, "'$&").slice(0, 200); // evita fórmulas inyectadas
@@ -179,6 +208,101 @@ function registrarPedido_(d) {
     '=IFERROR(INDEX(Pedidos!M:M,MATCH(A' + (start + i) + ',Pedidos!B:B,0)),"")']);
   if (filas.length) det.getRange(start, 1, filas.length, 5).setValues(filas);
   return { ok: true, codigo: codigo, total: total, estado: estado };
+}
+
+/* ---------- panel del dueño ---------- */
+function proximasHornadas_(cfg, n) {
+  const out = [], cerradas = fechasCerradas_(), hoy = new Date();
+  const base = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  for (let i = 0; out.length < n && i < 35; i++) {
+    const d = new Date(base); d.setDate(base.getDate() + i);
+    const k = ymd_(d);
+    if (cfg.dias.indexOf(d.getDay()) >= 0 && cerradas.indexOf(k) < 0) out.push(k);
+  }
+  return out;
+}
+
+function adminResumen_() {
+  const cfg = leerConfig_(), tz = tz_();
+  const prods = leerProductos_(false);
+  const desde = ymd_(new Date(Date.now() - 3 * 864e5));
+  const pedidos = [];
+  rows_('Pedidos').forEach(r => {
+    const h = r['Hornada'] instanceof Date ? ymd_(r['Hornada']) : String(r['Hornada'] || '');
+    if (!h || h < desde) return;
+    pedidos.push({
+      codigo: String(r['Código']), registrado: r['Registrado'] instanceof Date ? Utilities.formatDate(r['Registrado'], tz, "yyyy-MM-dd'T'HH:mm") : '',
+      hornada: h, nombre: String(r['Recibe'] || ''), direccion: String(r['Dirección'] || ''), franja: String(r['Franja'] || ''),
+      pago: String(r['Pago'] || ''), medio: String(r['Medio'] || ''), pagaCon: String(r['Paga con'] || ''),
+      galletas: num_(r['Galletas'], 0), detalle: String(r['Detalle'] || ''), total: num_(r['Total'], 0), estado: String(r['Estado'] || 'Por confirmar')
+    });
+  });
+  const estadoDe = {}; pedidos.forEach(p => estadoDe[p.codigo] = p.estado);
+  const produccion = {};
+  rows_('Detalle').forEach(r => {
+    const h = r['Hornada'] instanceof Date ? ymd_(r['Hornada']) : String(r['Hornada'] || '');
+    const c = String(r['Código']);
+    if (!h || h < desde || !(c in estadoDe) || estadoDe[c] === 'Cancelado') return;
+    produccion[h] = produccion[h] || {};
+    produccion[h][r['Sabor']] = (produccion[h][r['Sabor']] || 0) + num_(r['Cantidad'], 0);
+  });
+  const hoy = ymd_(new Date());
+  const hornadas = proximasHornadas_(cfg, 4);
+  Object.keys(produccion).forEach(h => { if (h >= hoy && hornadas.indexOf(h) < 0) hornadas.push(h); });
+  hornadas.sort();
+  return {
+    ok: true, ahora: new Date().toISOString(), hoy: hoy, config: cfg, hornadas: hornadas,
+    productos: rows_('Productos').filter(r => r['ID']).map(r => ({
+      id: String(r['ID']).trim(), nombre: String(r['Nombre']), visible: si_(r['Visible']), masa: String(r['Masa'] || ''),
+      colorMasa: String(r['Color masa'] || ''), colorBorde: String(r['Color borde'] || ''),
+      chips: String(r['Colores chips'] || '').split(',').map(x => x.trim()).filter(Boolean),
+      adorno: sinTildes_(r['Adorno'] || ''), rellena: si_(r['Rellena']), colorRelleno: String(r['Color relleno'] || ''), orden: num_(r['Orden'], 99)
+    })).sort((a, b) => a.orden - b.orden),
+    cerradas: rows_('Fechas cerradas').filter(r => r['Fecha']).map(r => ({ fecha: r['Fecha'] instanceof Date ? ymd_(r['Fecha']) : String(r['Fecha']), motivo: String(r['Motivo'] || '') })),
+    pedidos: pedidos, produccion: produccion, votacion: votacion_(),
+    hoja: ss_().getUrl()
+  };
+}
+
+function filaPor_(nombreHoja, col, valor) {
+  const sh = sheet_(nombreHoja), v = sh.getRange(1, col, sh.getLastRow(), 1).getValues();
+  for (let i = 1; i < v.length; i++) if (String(v[i][0]).trim() === String(valor)) return i + 1;
+  return 0;
+}
+
+function adminEstado_(d) {
+  if (ESTADOS.indexOf(d.estado) < 0) return { ok: false, error: 'Estado no válido' };
+  const f = filaPor_('Pedidos', 2, d.codigo); if (!f) return { ok: false, error: 'Pedido no encontrado' };
+  sheet_('Pedidos').getRange(f, 13).setValue(d.estado);
+  return { ok: true };
+}
+
+function adminProducto_(d) {
+  const f = filaPor_('Productos', 3, d.id); if (!f) return { ok: false, error: 'Producto no encontrado' };
+  sheet_('Productos').getRange(f, 1).setValue(d.visible ? 'Sí' : 'No');
+  return { ok: true };
+}
+
+function adminConfig_(d) {
+  const permitidos = { 'Tienda abierta': 'sino', 'Votación activa': 'sino', 'Cupo por hornada': 'num' };
+  const tipo = permitidos[d.clave]; if (!tipo) return { ok: false, error: 'Ajuste no permitido' };
+  const f = filaPor_('Configuración', 1, d.clave); if (!f) return { ok: false, error: 'Ajuste no encontrado' };
+  let v = d.valor;
+  if (tipo === 'sino') v = v ? 'Sí' : 'No';
+  if (tipo === 'num') { v = Math.floor(num_(v, -1)); if (v < 0 || v > 1000) return { ok: false, error: 'Número no válido' }; }
+  sheet_('Configuración').getRange(f, 2).setValue(v);
+  return { ok: true };
+}
+
+function adminFecha_(d) {
+  const m = String(d.fecha || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); if (!m) return { ok: false, error: 'Fecha no válida' };
+  const sh = sheet_('Fechas cerradas'), v = sh.getDataRange().getValues();
+  for (let i = v.length - 1; i >= 1; i--) {
+    const k = v[i][0] instanceof Date ? ymd_(v[i][0]) : String(v[i][0]);
+    if (k === d.fecha) { if (d.cerrar) return { ok: true }; sh.deleteRow(i + 1); }
+  }
+  if (d.cerrar) sh.appendRow([new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])), String(d.motivo || '').replace(/^[=+\-@]/, "'$&").slice(0, 80)]);
+  return { ok: true };
 }
 
 /* ---------- configuración inicial (ejecutar una vez) ---------- */

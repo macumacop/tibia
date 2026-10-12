@@ -37,6 +37,36 @@ Cuando cambies `Code.gs` más adelante: **Implementar → Gestionar implementaci
 - **Pedidos**: llegan en estado *Por confirmar*. Cámbialo en la lista desplegable (Confirmado, Horneado, En camino, Entregado, Cancelado). Los cancelados liberan cupo. *Revisar* marca pedidos fuera de horario o por encima del cupo.
 - **Producción**: galletas por hornada, bandejas, cupo libre y desglose por sabor. Se actualiza sola.
 
+## Seguridad (función /api de Cloudflare)
+
+La tienda y el panel no llaman al Apps Script directamente: pasan por `functions/api/[[path]].js`, que
+
+- agrega la clave secreta (`APPS_SCRIPT_KEY`); sin ella, la hoja responde «No autorizado»,
+- limita pedidos (6 cada 10 min), votos (10 cada 10 min) e intentos de PIN (6 cada 15 min) por conexión,
+- verifica Cloudflare Turnstile si está configurado (los pedidos sin verificación entran como *Revisar*; los votos se rechazan),
+- valida el PIN del dueño y firma su sesión por 30 días.
+
+Variables en Cloudflare → proyecto **tibia** → *Configuración* → *Variables y secretos* (tipo **Secreto**):
+
+| Variable | Valor |
+|---|---|
+| `APPS_SCRIPT_KEY` | La que muestra la función `generarClave` del Apps Script |
+| `ADMIN_PIN` | PIN del dueño (solo números, 4 a 10 dígitos) |
+| `APPS_SCRIPT_URL` | Opcional. URL `/exec` del Apps Script si cambia |
+| `TURNSTILE_SITEKEY` / `TURNSTILE_SECRET` | Opcional. Claves del widget Turnstile |
+
+Después de cambiar variables: *Implementaciones* → *Reintentar implementación* para que tomen efecto.
+
+## Panel del dueño
+
+`https://tibia.macgraficas.com/panel/` — entra con el PIN. Se puede **agregar a la pantalla de inicio** del celular (Chrome: menú ⋮ → *Agregar a pantalla de inicio*; Safari: Compartir → *Agregar a inicio*).
+
+- **Hornada**: galletas comprometidas vs. cupo, bandejas, ventas, sabores a hornear (con lista para tachar) y masas.
+- **Pedidos**: confirmar, marcar horneado, en camino, entregado o cancelar (cancelar libera cupo). Los marcados *Revisar* aparecen primero.
+- **Ajustes**: abrir o cerrar la tienda, cupo por hornada, votación, mostrar u ocultar sabores y cerrar fechas.
+
+Precios, sabores nuevos y textos se siguen editando en la hoja.
+
 ## Publicación (Cloudflare Pages)
 
 - Proyecto **tibia** en la cuenta de Cloudflare de Macgráficas, conectado a este repositorio (rama `main`, sin comando de compilación).

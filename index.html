@@ -466,6 +466,7 @@ p{margin:0}
 .legal input{flex:none;width:22px;height:22px;margin:0;accent-color:var(--ink)}
 .legal a{color:var(--ink);font-weight:700}
 .legal.need{animation:shake .45s;color:var(--bad)}
+.tsbox{position:fixed;left:50%;bottom:calc(150px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:90}
 .trap{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
 .closed-note{grid-column:1/-1;position:relative;background:var(--butter);color:var(--on-butter);border-radius:14px;padding:10px 12px;font-size:13px;font-weight:700}
 .loading .cupo-t b,.loading .horn span{opacity:.35}
@@ -669,6 +670,7 @@ body.novote .app{padding-bottom:120px}
   </div>
 </div>
 
+<div id="tsBox" class="tsbox"></div>
 <canvas id="fx" aria-hidden="true"></canvas>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
@@ -680,7 +682,7 @@ body.novote .app{padding-bottom:120px}
    hoja de Google Sheets a través de Apps Script (API_URL). Si la API no
    responde, la web funciona con los valores de respaldo de abajo.
    ===================================================================== */
-const API_URL='https://script.google.com/macros/s/AKfycbwiO3HNwTNb-4ZnLCfWOn8zxnyqtr6Zw4OB3pGLNzNqADAJJNl2wkDcFYe0MIHcw-s/exec';   // ← URL de la aplicación web de Apps Script (termina en /exec)
+const API_URL='/api';   // función de Cloudflare que protege la hoja (functions/api)
 
 const DEFAULTS={
   config:{abierta:true,dias:[1,3,5],horaHorneado:16,horaCorte:14,cupo:30,bandeja:15,whatsapp:'573132777667',
@@ -1019,7 +1021,7 @@ $('#sendWa').addEventListener('click',e=>{const m=validate();if(m){e.preventDefa
   const h=horns[hornIdx],{total}=totals(),n=cartCount();
   postApi({tipo:'pedido',codigo:draftCode,hornada:h.key,nombre:$('#fName').value.trim(),direccion:$('#fAddr').value.trim(),franja:slotT,
     pago:when==='now'?'antes':'recibir',medio:pay,pagaCon:$('#fCash').value.trim(),autoriza:true,trampa:$('#fTrap').value,
-    items:cart.map(it=>({tipo:it.type==='sueltas'?'unidad':it.type,sabores:it.comp}))}).then(()=>setTimeout(loadData,1500));
+    items:cart.map(it=>({tipo:it.type==='sueltas'?'unidad':it.type,sabores:it.comp})),cf:takeToken()}).then(()=>setTimeout(loadData,1500));
   OCUP[h.key]=(+OCUP[h.key]||0)+n;
   $('#waAgain').href=$('#sendWa').href;
   lastMsg=waText();$('#bubble').innerHTML=esc(lastMsg).replace(/\*([^*\n]+)\*/g,'<b>$1</b>');$('#doneCookie').innerHTML=cookie(LOGO,11,1);
@@ -1064,7 +1066,7 @@ function applyVoteVisibility(){const on=CFG.votacion.activa&&CANDS.length>0;docu
 (()=>{let raf=0,t0=0,el=null;
   const reset=()=>{cancelAnimationFrame(raf);if(el){el.classList.remove('holding');el.querySelector('.art').style.setProperty('--p',0)}el=null};
   const done=c=>{voted=c.dataset.v;store.set('tibia-vote',voted);const cd=CANDS.find(x=>x.id===voted);if(cd)cd.votos++;
-    postApi({tipo:'voto',sabor:voted,dispositivo:deviceId});
+    postApi({tipo:'voto',sabor:voted,dispositivo:deviceId,cf:takeToken()});
     const[x,y]=center(c.querySelector('.art'));confetti(x,y,90);buzz([20,50,20,50,60]);renderVote()};
   $('#cands').addEventListener('click',e=>{const t=e.target.closest('[data-tap]');if(t&&!voted){const c=t.closest('.cand');c.querySelector('.art').style.setProperty('--p',1);done(c)}});
   $('#cands').addEventListener('pointerdown',e=>{const c=e.target.closest('.cand');if(!c||voted||e.target.closest('[data-tap]'))return;el=c;c.classList.add('holding');t0=performance.now();buzz(6);
@@ -1086,6 +1088,13 @@ if(!reduced&&!store.get('tibia-peek',false)&&'IntersectionObserver' in window){c
 const repill=()=>{placePill($('#tabs'),$('.tab[aria-selected="true"]'),false);placePill($('#horns'),$(`.horn[data-h="${hornIdx}"]`),false);placePill($('#sizes'),$(`.size[data-s="${size}"]`),false);fxCar()};
 addEventListener('resize',repill);
 
+/* ---------- Anti-bots (Cloudflare Turnstile, si está configurado) ---------- */
+let tsKey='',tsToken='',tsWidget=null,tsLoading=false;
+function setupTurnstile(key){if(!key||tsKey)return;tsKey=key;if(tsLoading)return;tsLoading=true;
+  window.onTibiaTs=()=>{try{tsWidget=turnstile.render('#tsBox',{sitekey:tsKey,appearance:'interaction-only',callback:t=>{tsToken=t},'expired-callback':()=>{tsToken=''},'error-callback':()=>{tsToken=''}})}catch(e){}};
+  const sc=document.createElement('script');sc.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTibiaTs';sc.async=true;document.head.appendChild(sc)}
+function takeToken(){const t=tsToken;tsToken='';try{if(tsWidget!==null)turnstile.reset(tsWidget)}catch(e){}return t}
+
 /* ---------- Carga de datos desde la hoja ---------- */
 let loading=null;
 function renderAll(){const prevKey=horns[hornIdx]&&horns[hornIdx].key;horns=nextBakes(3);const k=horns.findIndex(h=>h.key===prevKey);hornIdx=k>=0?k:0;
@@ -1094,7 +1103,7 @@ function renderAll(){const prevKey=horns[hornIdx]&&horns[hornIdx].key;horns=next
 function loadData(){if(!API_URL||loading)return loading;
   loading=fetch(API_URL+(API_URL.includes('?')?'&':'?')+'t='+Date.now()).then(r=>r.json()).then(d=>{if(!d||!d.ok)throw 0;
     const sig=JSON.stringify([d.config,d.productos,d.cerradas,d.votacion]);
-    const first=!loaded;applyData(d);loaded=true;document.body.classList.remove('loading');
+    const first=!loaded;applyData(d);loaded=true;setupTurnstile(d.turnstileSiteKey);document.body.classList.remove('loading');
     if(first||sig!==loadData.sig)renderAll();else{buildHorns();updateCupo();CANDS.length&&curTab==='vota'&&!$('#cands .holding')&&renderVote()}
     loadData.sig=sig}).catch(()=>{if(!loaded){loaded=true;document.body.classList.remove('loading');buildHorns();updateCupo()}}).finally(()=>{loading=null});
   return loading}
