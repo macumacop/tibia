@@ -334,7 +334,7 @@ p{margin:0}
 .vote-hero h1{font-family:var(--f-display);font-weight:800;font-size:32px;line-height:1.05}
 .vote-hero p{color:var(--muted);font-size:14px}
 .cands{display:flex;flex-direction:column;gap:12px}
-.cand{display:grid;grid-template-columns:92px 1fr;gap:14px;align-items:center;background:var(--surface);border:1.5px solid var(--line);border-radius:24px;padding:12px;text-align:left;width:100%;touch-action:none;transition:transform .2s var(--spring)}
+.cand{display:grid;grid-template-columns:92px 1fr;gap:14px;align-items:center;background:var(--surface);border:1.5px solid var(--line);border-radius:24px;padding:12px;text-align:left;width:100%;touch-action:pan-y;-webkit-touch-callout:none;transition:transform .2s var(--spring)}
 .cand.holding{transform:scale(.97)}
 .cand .art{--p:0;width:92px;height:92px;border-radius:50%;padding:6px;background:conic-gradient(var(--butter) calc(var(--p)*360deg),var(--sunk) 0)}
 .cand .art>span{display:block;width:100%;height:100%;border-radius:50%;background:var(--surface);padding:3px}
@@ -1063,15 +1063,22 @@ function renderVote(){const vt=CFG.votacion;
   if(voted)requestAnimationFrame(()=>requestAnimationFrame(()=>$$('.cand').forEach(c=>c.querySelector('.vbar i').style.width=c.dataset.pct+'%')));
   const t=$('#thanks');if(voted){t.hidden=false;t.textContent=`Votaste por ${CANDS.find(c=>c.id===voted).name}. Si gana, te avisamos para que lo pruebes en la hornada de estreno.`}else t.hidden=true}
 function applyVoteVisibility(){const on=CFG.votacion.activa&&CANDS.length>0;document.body.classList.toggle('novote',!on);$('.tabbar').hidden=!on;if(!on&&curTab==='vota')go('pedir')}
-(()=>{let raf=0,t0=0,el=null;
-  const reset=()=>{cancelAnimationFrame(raf);if(el){el.classList.remove('holding');el.querySelector('.art').style.setProperty('--p',0)}el=null};
+(()=>{let raf=0,t0=0,el=null,x0=0,y0=0,started=false;
+  const HOLD_DELAY=160,HOLD_MS=850,MOVE_TOL=10; // el llenado arranca solo si el dedo se queda quieto
+  const reset=()=>{cancelAnimationFrame(raf);if(el){el.classList.remove('holding');el.querySelector('.art').style.setProperty('--p',0)}el=null;started=false};
   const done=c=>{voted=c.dataset.v;store.set('tibia-vote',voted);const cd=CANDS.find(x=>x.id===voted);if(cd)cd.votos++;
     postApi({tipo:'voto',sabor:voted,dispositivo:deviceId,cf:takeToken()});
     const[x,y]=center(c.querySelector('.art'));confetti(x,y,90);buzz([20,50,20,50,60]);renderVote()};
   $('#cands').addEventListener('click',e=>{const t=e.target.closest('[data-tap]');if(t&&!voted){const c=t.closest('.cand');c.querySelector('.art').style.setProperty('--p',1);done(c)}});
-  $('#cands').addEventListener('pointerdown',e=>{const c=e.target.closest('.cand');if(!c||voted||e.target.closest('[data-tap]'))return;el=c;c.classList.add('holding');t0=performance.now();buzz(6);
-    const step=t=>{const p=Math.min(1,(t-t0)/850);c.querySelector('.art').style.setProperty('--p',p);if(p<1)raf=requestAnimationFrame(step);else{const cc=el;el=null;cc.classList.remove('holding');done(cc)}};raf=requestAnimationFrame(step)});
-  ['pointerup','pointerleave','pointercancel'].forEach(ev=>$('#cands').addEventListener(ev,()=>{if(el){reset();if(!voted)toast('Mantén presionado hasta llenar el círculo, o toca «Votar por este sabor»')}}));
+  $('#cands').addEventListener('pointerdown',e=>{const c=e.target.closest('.cand');if(!c||voted||e.target.closest('[data-tap]'))return;reset();el=c;x0=e.clientX;y0=e.clientY;t0=performance.now()+HOLD_DELAY;
+    const step=t=>{if(!el)return;if(t<t0){raf=requestAnimationFrame(step);return}
+      if(!started){started=true;c.classList.add('holding');buzz(6)}
+      const p=Math.min(1,(t-t0)/HOLD_MS);c.querySelector('.art').style.setProperty('--p',p);if(p<1)raf=requestAnimationFrame(step);else{const cc=el;el=null;started=false;cc.classList.remove('holding');done(cc)}};raf=requestAnimationFrame(step)});
+  // si el dedo se mueve (scroll), se cancela sin avisar
+  $('#cands').addEventListener('pointermove',e=>{if(el&&Math.hypot(e.clientX-x0,e.clientY-y0)>MOVE_TOL)reset()});
+  $('#cands').addEventListener('pointercancel',reset);
+  $('#cands').addEventListener('pointerup',()=>{if(!el)return;const wasHolding=started;reset();if(!voted&&wasHolding)toast('Mantén presionado hasta llenar el círculo, o toca «Votar por este sabor»')});
+  $('#cands').addEventListener('pointerleave',reset);
   $('#cands').addEventListener('keydown',e=>{const c=e.target.closest('.cand');if(c&&!voted&&(e.key==='Enter'||e.key===' ')){e.preventDefault();done(c)}});
   $('#cands').addEventListener('contextmenu',e=>e.preventDefault())})();
 
